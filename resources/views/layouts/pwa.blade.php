@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#2196F3">
     <meta name="description" content="نظام الحضور والغياب الذكي - PWA">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="نظام الحضور">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     
     <title>@yield('title', 'نظام الحضور والغياب')</title>
     
@@ -35,7 +36,10 @@
                 </div>
                 <div id="userMenu" class="user-dropdown" style="display: none;">
                     <a href="{{ route('profile.show') }}">الملف الشخصي</a>
-                    <a href="{{ route('logout') }}">تسجيل الخروج</a>
+                    <form method="POST" action="{{ route('logout') }}" style="display: inline;">
+                        @csrf
+                        <button type="submit" style="background: none; border: none; color: inherit; cursor: pointer; padding: 0;">تسجيل الخروج</button>
+                    </form>
                 </div>
             </div>
         </header>
