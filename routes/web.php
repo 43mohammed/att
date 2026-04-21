@@ -903,7 +903,7 @@ Route::prefix('instructor')->group(function () {
         if (!session('user_id') || session('user_role') !== 'instructor') {
             return redirect('/login');
         }
-        $course = Course::with(['enrollments.student', 'attendanceSessions'])->findOrFail($course);
+        $course = Course::with(['enrollments.student', 'sessions'])->findOrFail($course);
         return view('instructor.courses.attendance', compact('course'));
     })->name('instructor.courses.attendance');
     
@@ -976,7 +976,7 @@ Route::prefix('student')->group(function () {
 
         $studentId = session('user_id');
         $enrollments = \App\Models\Enrollment::where('student_id', $studentId)
-            ->with(['course.instructor', 'course.attendanceSessions', 'course.attendanceRecords'])
+            ->with(['course.instructor', 'course.sessions', 'course.attendanceRecords'])
             ->get();
 
         $courseIds = $enrollments->pluck('course_id')->unique();
