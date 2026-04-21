@@ -1,6 +1,6 @@
-const CACHE_NAME = 'attendance-system-v1';
-const RUNTIME_CACHE = 'attendance-runtime';
-const API_CACHE = 'attendance-api';
+const CACHE_NAME = 'attendance-system-v2'; // Updated version to force cache refresh
+const RUNTIME_CACHE = 'attendance-runtime-v2';
+const API_CACHE = 'attendance-api-v2';
 const URLS_TO_CACHE = [
     '/',
     '/css/pwa.css',
@@ -8,6 +8,23 @@ const URLS_TO_CACHE = [
     '/manifest.json',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
     'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'
+];
+
+// Authentication routes that should NEVER be cached
+const AUTH_ROUTES = [
+    '/login',
+    '/logout',
+    '/register',
+    '/admin/login',
+    '/admin/logout',
+    '/sanctum/csrf-cookie'
+];
+
+// API routes that should use network-first strategy
+const API_ROUTES = [
+    '/api/',
+    '/attendance/',
+    '/admin/'
 ];
 
 // Update cache names
@@ -28,36 +45,29 @@ self.addEventListener('install', event => {
     self.skipWaiting();
 });
 
-// تثبيت Service Worker
-self.addEventListener('install', event => {
-    console.log('🔧 Service Worker installing...');
-    event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-            console.log('📦 Caching app shell');
-            return cache.addAll(URLS_TO_CACHE).catch(error => {
-                console.log('❌ Cache addAll error:', error);
-            });
-        })
-    );
-    self.skipWaiting();
-});
-
 // تفعيل Service Worker
 self.addEventListener('activate', event => {
     console.log('✅ Service Worker activated');
     event.waitUntil(
-        caches.keys().then(cacheNames => {
-            return Promise.all(
-                cacheNames.map(cacheName => {
-                    if (cacheName !== CACHE_NAME && 
-                        cacheName !== RUNTIME_CACHE && 
-                        cacheName !== API_CACHE) {
-                        console.log('🗑️ Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        })
+        Promise.all([
+            // Delete old caches
+            caches.keys().then(cacheNames => {
+                return Promise.all(
+                    cacheNames.map(cacheName => {
+                        if (cacheName !== CACHE_NAME &&
+                            cacheName !== RUNTIME_CACHE &&
+                            cacheName !== API_CACHE) {
+                            console.log('🗑️ Deleting old cache:', cacheName);
+                            return caches.delete(cacheName);
+                        }
+                    })
+                );
+            }),
+            // Clear all caches on activation to prevent stale data
+            caches.delete(CACHE_NAME),
+            caches.delete(RUNTIME_CACHE),
+            caches.delete(API_CACHE)
+        ])
     );
     self.clients.claim();
 });
@@ -75,6 +85,12 @@ self.addEventListener('fetch', event => {
     // تجاهل طلبات Chrome extensions
     if (url.protocol === 'chrome-extension:') {
         return;
+    }
+
+    // NEVER cache authentication routes - always go to network
+    if (isAuthRoute(url.pathname)) {
+        console.log('🚫 Skipping cache for auth route:', url.pathname);
+        return; // Let the browser handle it normally
     }
 
     // استراتيجية Cache First للملفات الثابتة
@@ -105,13 +121,13 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // استراتيجية Network First للـ API
-    if (url.pathname.includes('/api/') || url.pathname.includes('/attendance/')) {
+    // استراتيجية Network First للـ API والمسارات المصادقة
+    if (isApiRoute(url.pathname)) {
         event.respondWith(
             fetch(request)
                 .then(response => {
-                    // حفظ النسخة الناجحة
-                    if (response && response.status === 200) {
+                    // حفظ النسخة الناجحة فقط إذا لم تكن مصادقة
+                    if (response && response.status === 200 && !isAuthRoute(url.pathname)) {
                         const responseToCache = response.clone();
                         caches.open(API_CACHE).then(cache => {
                             cache.put(request, responseToCache);
@@ -120,56 +136,60 @@ self.addEventListener('fetch', event => {
                     return response;
                 })
                 .catch(() => {
-                    // محاولة الحصول على النسخة المخزنة
-                    return caches.match(request).then(response => {
-                        if (response) {
-                            return response;
-                        }
-                        // إرجاع استجابة خطأ
-                        return new Response(
-                            JSON.stringify({
-                                success: false,
-                                message: 'لا يوجد اتصال بالإنترنت. البيانات المخزنة قد تكون قديمة.',
-                            }),
-                            {
-                                status: 503,
-                                statusText: 'Service Unavailable',
-                                headers: new Headers({
-                                    'Content-Type': 'application/json',
-                                }),
+                    // محاولة الحصول على النسخة المخزنة فقط للـ API غير المصادقة
+                    if (!isAuthRoute(url.pathname)) {
+                        return caches.match(request).then(response => {
+                            if (response) {
+                                return response;
                             }
-                        );
-                    });
+                        });
+                    }
+                    // إرجاع استجابة خطأ
+                    return new Response(
+                        JSON.stringify({
+                            success: false,
+                            message: 'لا يوجد اتصال بالإنترنت. البيانات المخزنة قد تكون قديمة.',
+                        }),
+                        {
+                            status: 503,
+                            statusText: 'Service Unavailable',
+                            headers: new Headers({
+                                'Content-Type': 'application/json',
+                            }),
+                        }
+                    );
                 })
         );
         return;
     }
 
-    // استراتيجية Stale While Revalidate للصفحات
-    event.respondWith(
-        caches.match(request).then(response => {
-            const fetchPromise = fetch(request).then(response => {
-                // حفظ النسخة الجديدة
-                if (response && response.status === 200) {
-                    const responseToCache = response.clone();
-                    caches.open(CACHE_NAME).then(cache => {
-                        cache.put(request, responseToCache);
-                    });
-                }
-                return response;
-            });
+    // استراتيجية Stale While Revalidate للصفحات (مع تجنب المصادقة)
+    if (!isAuthRoute(url.pathname)) {
+        event.respondWith(
+            caches.match(request).then(response => {
+                const fetchPromise = fetch(request).then(response => {
+                    // حفظ النسخة الجديدة
+                    if (response && response.status === 200) {
+                        const responseToCache = response.clone();
+                        caches.open(CACHE_NAME).then(cache => {
+                            cache.put(request, responseToCache);
+                        });
+                    }
+                    return response;
+                });
 
-            return response || fetchPromise;
-        }).catch(() => {
-            return new Response('Offline - Page not available', {
-                status: 503,
-                statusText: 'Service Unavailable',
-                headers: new Headers({
-                    'Content-Type': 'text/plain'
-                })
-            });
-        })
-    );
+                return response || fetchPromise;
+            }).catch(() => {
+                return new Response('Offline - Page not available', {
+                    status: 503,
+                    statusText: 'Service Unavailable',
+                    headers: new Headers({
+                        'Content-Type': 'text/plain'
+                    })
+                });
+            })
+        );
+    }
 });
 
 // معالجة الرسائل من العميل
@@ -185,6 +205,10 @@ self.addEventListener('message', event => {
             caches.delete(API_CACHE)
         ]).then(() => {
             console.log('✅ All caches cleared');
+            // Force refresh of all clients
+            self.clients.matchAll().then(clients => {
+                clients.forEach(client => client.postMessage({ type: 'CACHE_CLEARED' }));
+            });
         });
     }
 
@@ -244,6 +268,16 @@ self.addEventListener('notificationclick', event => {
 // دالة مساعدة للتحقق من الملفات الثابتة
 function isStaticAsset(pathname) {
     return /\.(js|css|png|jpg|jpeg|svg|gif|webp|woff|woff2|ttf|eot)$/i.test(pathname);
+}
+
+// دالة للتحقق من routes المصادقة
+function isAuthRoute(pathname) {
+    return AUTH_ROUTES.some(route => pathname.startsWith(route));
+}
+
+// دالة للتحقق من routes API
+function isApiRoute(pathname) {
+    return API_ROUTES.some(route => pathname.includes(route));
 }
 
 // دالة مزامنة البيانات المحفوظة محلياً

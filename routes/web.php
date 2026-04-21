@@ -24,40 +24,95 @@ Route::get('/', function () {
 });
 
 // Authentication Routes (Bypass for testing)
-Route::get('/login', function () {
-    return view('auth.login');
-})->name('login');
-
-Route::post('/login', function (Request $request) {
-    // Simple authentication for demo purposes
-    $email = $request->input('email');
-    $password = $request->input('password');
-    
-    // Find user by email
-    $user = \App\Models\User::where('email', $email)->first();
-    
-    if ($user && \Illuminate\Support\Facades\Hash::check($password, $user->password)) {
-        // Set session data based on actual user data
-        session([
-            'user_id' => $user->id,
-            'user_role' => $user->role,
-            'user_name' => $user->name,
-            'user_email' => $user->email
+Route::middleware('no.cache.auth')->group(function () {
+    Route::get('/login', function () {
+        return response()->view('auth.login')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
         ]);
-        return redirect('/dashboard');
-    }
-    
-    return back()->with('error', 'بيانات الدخول غير صحيحة');
-})->name('login.post');
+    })->name('login');
 
-Route::get('/register', function () {
-    return view('auth.register');
-})->name('register');
+    Route::post('/login', function (Request $request) {
+        // Simple authentication for demo purposes
+        $email = $request->input('email');
+        $password = $request->input('password');
+        
+        // Find user by email
+        $user = \App\Models\User::where('email', $email)->first();
+        
+        if ($user && \Illuminate\Support\Facades\Hash::check($password, $user->password)) {
+            // Regenerate session to prevent session fixation
+            session()->regenerate(true);
+            
+            // Set session data based on actual user data
+            session([
+                'user_id' => $user->id,
+                'user_role' => $user->role,
+                'user_name' => $user->name,
+                'user_email' => $user->email
+            ]);
+            
+            // Return redirect with cache control headers
+            return redirect('/dashboard')->withHeaders([
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+                'Pragma' => 'no-cache',
+                'Expires' => '0'
+            ]);
+        }
+        
+        return back()->with('error', 'بيانات الدخول غير صحيحة');
+    })->name('login.post');
 
-Route::post('/logout', function () {
-    session()->flush();
-    return redirect('/login');
-})->name('logout');
+    Route::get('/register', function () {
+        return response()->view('auth.register')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('register');
+
+    Route::post('/register', function (Request $request) {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'phone' => 'nullable|string|max:20',
+            'department' => 'nullable|string|max:255',
+            'role' => 'required|in:admin,instructor,student',
+        'student_id' => 'nullable|string|max:255',
+        'password' => 'required|string|min:6|confirmed',
+    ]);
+
+    User::create([
+        'name' => $validated['name'],
+        'email' => $validated['email'],
+        'phone' => $validated['phone'] ?? null,
+        'department' => $validated['department'] ?? null,
+        'role' => $validated['role'],
+        'student_id' => $validated['student_id'] ?? null,
+        'password' => bcrypt($validated['password']),
+    ]);
+
+    return redirect('/login')->with('success', 'تم التسجيل بنجاح، يرجى تسجيل الدخول')->withHeaders([
+        'Cache-Control' => 'no-cache, no-store, must-revalidate',
+        'Pragma' => 'no-cache',
+        'Expires' => '0'
+    ]);
+})->name('register.post');
+
+    Route::post('/logout', function () {
+        // Clear all session data regardless of current state
+        session()->flush();
+        session()->regenerate(true);
+        
+        // Return redirect with cache control headers
+        return redirect('/login')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('logout');
+});
 
 // Dashboard Routes
 Route::get('/dashboard', function () {
@@ -989,6 +1044,83 @@ Route::prefix('student')->group(function () {
         }
         return view('student.profile.index');
     })->name('student.profile');
+    
+    Route::get('/scan-qr', function () {
+        if (!session('user_id')) {
+            return redirect('/login')->with('error', 'يجب تسجيل الدخول أولاً');
+        }
+        if (session('user_role') !== 'student') {
+            return redirect('/dashboard')->with('error', 'هذه الصفحة مخصصة للطلاب فقط');
+        }
+        return view('student.scan-qr');
+    })->name('student.scan-qr');
+    
+    Route::post('/scan-qr', function (Request $request) {
+        if (!session('user_id') || session('user_role') !== 'student') {
+            return response()->json(['error' => 'غير مصرح'], 403);
+        }
+        
+        $qrData = $request->input('qr_data');
+        $studentId = session('user_id');
+        
+        // Parse QR data - could be URL or session_id:token
+        if (str_contains($qrData, 'http')) {
+            // Extract session and token from URL
+            parse_str(parse_url($qrData, PHP_URL_QUERY), $params);
+            $sessionId = $params['session'] ?? null;
+            $token = $params['token'] ?? null;
+        } else {
+            // Parse QR data - assuming format: session_id:token
+            $parts = explode(':', $qrData);
+            if (count($parts) !== 2) {
+                return response()->json(['error' => 'رمز QR غير صالح'], 400);
+            }
+            $sessionId = $parts[0];
+            $token = $parts[1];
+        }
+        
+        if (!$sessionId || !$token) {
+            return response()->json(['error' => 'رمز QR غير صالح'], 400);
+        }
+        
+        $attendanceSession = AttendanceSession::where('id', $sessionId)
+            ->where('qr_code_token', $token)
+            ->where('status', 'active')
+            ->first();
+        
+        if (!$attendanceSession) {
+            return response()->json(['error' => 'جلسة الحضور غير صالحة أو منتهية'], 400);
+        }
+        
+        // Check if student is enrolled in the course
+        $enrollment = Enrollment::where('student_id', $studentId)
+            ->where('course_id', $attendanceSession->course_id)
+            ->first();
+        
+        if (!$enrollment) {
+            return response()->json(['error' => 'غير مسجل في هذا المقرر'], 400);
+        }
+        
+        // Check if already marked attendance
+        $existingRecord = AttendanceRecord::where('session_id', $sessionId)
+            ->where('student_id', $studentId)
+            ->first();
+        
+        if ($existingRecord) {
+            return response()->json(['error' => 'تم تسجيل الحضور مسبقاً'], 400);
+        }
+        
+        // Mark attendance
+        AttendanceRecord::create([
+            'session_id' => $sessionId,
+            'student_id' => $studentId,
+            'course_id' => $attendanceSession->course_id,
+            'marked_at' => now(),
+            'verification_method' => 'qr_scan',
+        ]);
+        
+        return response()->json(['success' => 'تم تسجيل الحضور بنجاح']);
+    })->name('student.scan-qr.post');
 });
 
 // Notifications

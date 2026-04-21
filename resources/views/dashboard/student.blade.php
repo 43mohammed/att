@@ -97,9 +97,9 @@
                 <p style="color: var(--text-light); margin-bottom: var(--spacing-lg); font-size: 0.9rem;">
                     امسح رمز QR لتسجيل حضورك
                 </p>
-                <button class="btn btn-primary btn-lg btn-block" onclick="startQRScanner()" style="margin-bottom: var(--spacing-md);">
-                    📷 ابدأ المسح
-                </button>
+                <a href="/student/scan-qr" class="btn btn-primary btn-lg btn-block" style="margin-bottom: var(--spacing-md); text-decoration: none; color: white;">
+                    📷 مسح QR Code
+                </a>
                 <div id="qr-scanner" style="display: none; margin-top: var(--spacing-lg);">
                     <video id="video" style="width: 100%; border-radius: var(--radius-lg); max-height: 300px; background: var(--dark);"></video>
                     <canvas id="canvas" style="display: none;"></canvas>
@@ -231,7 +231,38 @@ function scanQRCode() {
                 
                 if (code) {
                     console.log('QR Code detected:', code.data);
-                    alert('تم مسح الرمز بنجاح: ' + code.data);
+                    
+                    // Send to server
+                    fetch('/student/scan-qr', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                        },
+                        body: JSON.stringify({
+                            qr_data: code.data
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('تم تسجيل الحضور بنجاح!');
+                            // Hide scanner
+                            document.getElementById('qr-scanner').style.display = 'none';
+                            if (video.srcObject) {
+                                video.srcObject.getTracks().forEach(track => track.stop());
+                            }
+                            // Reload page to update stats
+                            setTimeout(() => location.reload(), 1000);
+                        } else {
+                            alert('خطأ: ' + data.error);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('خطأ في الاتصال بالخادم');
+                    });
+                    
                     return;
                 }
             } catch (e) {

@@ -7,6 +7,11 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="description" content="نظام الحضور والغياب الذكي">
     
+    <!-- Prevent caching for authentication pages -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" type="image/png" href="/image/icon-192x192.png">
     <link rel="stylesheet" href="/css/style.css">
@@ -26,7 +31,6 @@
             <li><a href="/profile">الملف الشخصي</a></li>
             <li>
                 <form method="POST" action="/logout" style="display: inline;">
-                    @csrf
                     <button type="submit">تسجيل الخروج</button>
                 </form>
             </li>
@@ -81,6 +85,10 @@
                 <span class="bottom-nav-icon">📋</span>
                 <span>الحضور</span>
             </a>
+            <a href="/student/scan-qr" class="@if(request()->is('student/scan-qr')) active @endif">
+                <span class="bottom-nav-icon">📷</span>
+                <span>مسح QR</span>
+            </a>
         @elseif(session('user_role') === 'instructor')
             <a href="/instructor/attendance" class="@if(request()->is('instructor/attendance')) active @endif">
                 <span class="bottom-nav-icon">📊</span>
@@ -102,6 +110,7 @@
             <span class="bottom-nav-icon">⚙️</span>
             <span>الإعدادات</span>
         </a>
+
     </nav>
 
     <script src="/js/app.js"></script>

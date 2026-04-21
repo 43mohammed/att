@@ -427,6 +427,94 @@ window.addEventListener('online', () => {
 });
 
 // ============================================
+// CSRF Token Management
+// ============================================
+
+class CSRFManager {
+    static async refreshToken() {
+        try {
+            const response = await fetch('/sanctum/csrf-cookie', {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+
+            if (response.ok) {
+                // Update the CSRF token in meta tag
+                const token = this.getCookie('XSRF-TOKEN');
+                if (token) {
+                    const metaTag = document.querySelector('meta[name="csrf-token"]');
+                    if (metaTag) {
+                        metaTag.setAttribute('content', decodeURIComponent(token));
+                        console.log('✅ تم تحديث CSRF token');
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('❌ خطأ في تحديث CSRF token:', error);
+        }
+    }
+
+    static getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    static async handleLogout() {
+        // Clear all caches on logout
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'CLEAR_CACHE'
+            });
+        }
+
+        // Refresh CSRF token after logout
+        setTimeout(() => {
+            this.refreshToken();
+        }, 100);
+    }
+}
+
+// ============================================
+// Service Worker Registration
+// ============================================
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+                console.log('✅ تم تسجيل Service Worker:', registration.scope);
+
+                // Listen for cache cleared message
+                navigator.serviceWorker.addEventListener('message', event => {
+                    if (event.data && event.data.type === 'CACHE_CLEARED') {
+                        console.log('✅ تم مسح الذاكرة المؤقتة');
+                        // Force page reload to get fresh content
+                        window.location.reload();
+                    }
+                });
+
+                // Handle logout events
+                const logoutForms = document.querySelectorAll('form[action*="logout"]');
+                logoutForms.forEach(form => {
+                    form.addEventListener('submit', () => {
+                        CSRFManager.handleLogout();
+                    });
+                });
+
+            })
+            .catch(error => {
+                console.error('❌ خطأ في تسجيل Service Worker:', error);
+            });
+    });
+}
+
+// ============================================
 // Export
 // ============================================
 
@@ -436,3 +524,4 @@ window.GPSLocation = GPSLocation;
 window.submitAttendance = submitAttendance;
 window.showNotification = showNotification;
 window.syncPendingData = syncPendingData;
+window.CSRFManager = CSRFManager;
