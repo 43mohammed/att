@@ -52,7 +52,7 @@
                 </div>
                 <div class="card-body">
                     <button id="startQR" class="btn btn-primary btn-block">🎥 ابدأ مسح QR Code</button>
-                    <video id="video" style="width: 100%; margin-top: 1rem; display: none;"></video>
+                    <video id="video" autoplay playsinline muted style="width: 100%; margin-top: 1rem; height: auto; display: none; object-fit: cover; background: #000;"></video>
                     <canvas id="canvas" style="display: none;"></canvas>
                 </div>
             </div>

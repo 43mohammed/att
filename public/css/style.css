@@ -94,7 +94,40 @@ body.font-large {
 
 body.dark-mode {
     background-color: #111827;
-    color: #d1d5db;
+    color: #ffffff;
+}
+
+body.dark-mode,
+body.dark-mode h1,
+body.dark-mode h2,
+body.dark-mode h3,
+body.dark-mode h4,
+body.dark-mode h5,
+body.dark-mode h6,
+body.dark-mode p,
+body.dark-mode a,
+body.dark-mode span,
+body.dark-mode label,
+body.dark-mode li,
+body.dark-mode th,
+body.dark-mode td,
+body.dark-mode strong,
+body.dark-mode button,
+body.dark-mode input,
+body.dark-mode textarea,
+body.dark-mode select,
+body.dark-mode .card,
+body.dark-mode .card-body,
+body.dark-mode .table,
+body.dark-mode .alert,
+body.dark-mode .badge,
+body.dark-mode .navbar-menu a,
+body.dark-mode .navbar-menu button,
+body.dark-mode .bottom-nav a,
+body.dark-mode .btn,
+body.dark-mode .form-control,
+body.dark-mode .input-group-text {
+    color: #ffffff;
 }
 
 body.dark-mode .navbar,
@@ -104,7 +137,7 @@ body.dark-mode .alert,
 body.dark-mode .form-control,
 body.dark-mode .progress {
     background-color: #1f2937;
-    color: #d1d5db;
+    color: #ffffff;
     border-color: #374151;
 }
 

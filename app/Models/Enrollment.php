@@ -28,4 +28,10 @@ class Enrollment extends Model
     {
         return $this->belongsTo(Course::class);
     }
+
+    public function attendanceRecords()
+    {
+        return $this->hasMany(AttendanceRecord::class, 'student_id', 'student_id')
+            ->where('course_id', $this->course_id);
+    }
 }

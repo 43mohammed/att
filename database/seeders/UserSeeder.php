@@ -51,6 +51,10 @@ class UserSeeder extends Seeder
             'password' => Hash::make('student123'),
             'role' => 'student',
             'phone' => '0503333333',
+            'department' => 'علوم الحاسب',
+            'specialization' => 'برمجة',
+            'level' => 2,
+            'section' => 'ب',
         ]);
 
         User::updateOrCreate([
@@ -60,6 +64,10 @@ class UserSeeder extends Seeder
             'password' => Hash::make('student123'),
             'role' => 'student',
             'phone' => '0504444444',
+            'department' => 'علوم الحاسب',
+            'specialization' => 'عام',
+            'level' => 1,
+            'section' => 'أ',
         ]);
 
         User::updateOrCreate([
@@ -69,6 +77,10 @@ class UserSeeder extends Seeder
             'password' => Hash::make('student123'),
             'role' => 'student',
             'phone' => '0505555555',
+            'department' => 'الرياضيات',
+            'specialization' => 'عام',
+            'level' => 1,
+            'section' => 'أ',
         ]);
     }
 }

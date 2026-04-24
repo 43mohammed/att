@@ -71,9 +71,9 @@
                     <span>📊</span>
                     <span>عرض التقارير</span>
                 </a>
-                <a href="/admin/audit-logs" class="btn btn-warning btn-lg btn-block" style="text-decoration: none;">
-                    <span>📋</span>
-                    <span>سجلات النظام</span>
+                <a href="/admin/departments" class="btn btn-info btn-lg btn-block" style="text-decoration: none;">
+                    <span>🏫</span>
+                    <span>إدارة الأقسام</span>
                 </a>
             </div>
         </div>

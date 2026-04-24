@@ -10,6 +10,8 @@ use App\Models\Enrollment;
 use App\Models\Report;
 use App\Models\Notification;
 use App\Models\AuditLog;
+use App\Models\Department;
+use App\Models\Specialization;
 use Illuminate\Http\Request;
 
 /*
@@ -65,7 +67,10 @@ Route::middleware('no.cache.auth')->group(function () {
     })->name('login.post');
 
     Route::get('/register', function () {
-        return response()->view('auth.register')->withHeaders([
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+
+        return response()->view('auth.register', compact('departments', 'specializations'))->withHeaders([
             'Cache-Control' => 'no-cache, no-store, must-revalidate',
             'Pragma' => 'no-cache',
             'Expires' => '0'
@@ -74,31 +79,163 @@ Route::middleware('no.cache.auth')->group(function () {
 
     Route::post('/register', function (Request $request) {
         $validated = $request->validate([
+            'email' => [
+                'required',
+                'email',
+                'unique:users,email',
+                function ($attribute, $value, $fail) {
+                    // التحقق من أن البريد ينتمي إلى جامعة الحدود الشمالية
+                    if (!preg_match('/@nbu\.edu\.sa$/', $value)) {
+                        $fail('يجب أن يكون البريد الإلكتروني من جامعة الحدود الشمالية (@nbu.edu.sa)');
+                    }
+                },
+            ],
+        ]);
+
+        // إنشاء رمز تحقق عشوائي
+        $verificationCode = strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 6));
+
+        // حفظ البيانات في الجلسة مؤقتاً
+        session([
+            'registration_data' => [
+                'email' => $validated['email'],
+                'verification_code' => $verificationCode,
+                'expires_at' => now()->addMinutes(10), // صالح لمدة 10 دقائق
+            ]
+        ]);
+
+        // إرسال البريد الإلكتروني
+        try {
+            \Illuminate\Support\Facades\Mail::to($validated['email'])->send(new \App\Mail\EmailVerification((object)['name' => 'طالب جديد'], $verificationCode));
+        } catch (\Exception $e) {
+            return back()->withErrors(['email' => 'فشل في إرسال البريد الإلكتروني. يرجى المحاولة مرة أخرى.']);
+        }
+
+        return redirect('/register/verify')->with('success', 'تم إرسال رمز التحقق إلى بريدك الإلكتروني');
+    })->name('register.post');
+
+    Route::get('/register/verify', function () {
+        if (!session('registration_data')) {
+            return redirect('/register')->withErrors(['general' => 'يرجى إدخال البريد الإلكتروني أولاً']);
+        }
+
+        return response()->view('auth.verify_email')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('register.verify');
+
+    Route::post('/register/verify', function (Request $request) {
+        if (!session('registration_data')) {
+            return redirect('/register')->withErrors(['general' => 'انتهت صلاحية الجلسة. يرجى البدء من جديد.']);
+        }
+
+        $registrationData = session('registration_data');
+
+        // التحقق من انتهاء صلاحية الرمز
+        if (now()->isAfter($registrationData['expires_at'])) {
+            session()->forget('registration_data');
+            return redirect('/register')->withErrors(['code' => 'انتهت صلاحية رمز التحقق. يرجى طلب رمز جديد.']);
+        }
+
+        $validated = $request->validate([
+            'verification_code' => 'required|string|size:6',
+        ]);
+
+        if (strtoupper($validated['verification_code']) !== $registrationData['verification_code']) {
+            return back()->withErrors(['verification_code' => 'رمز التحقق غير صحيح']);
+        }
+
+        // الرمز صحيح، الانتقال إلى إكمال التسجيل
+        session(['email_verified' => true]);
+
+        return redirect('/register/complete');
+    })->name('register.verify.post');
+
+    Route::get('/register/complete', function () {
+        if (!session('email_verified') || !session('registration_data')) {
+            return redirect('/register')->withErrors(['general' => 'يرجى إكمال عملية التحقق أولاً']);
+        }
+
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+
+        return response()->view('auth.register_complete', compact('departments', 'specializations'))->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('register.complete');
+
+    Route::post('/register/complete', function (Request $request) {
+        if (!session('email_verified') || !session('registration_data')) {
+            return redirect('/register')->withErrors(['general' => 'يرجى إكمال عملية التحقق أولاً']);
+        }
+
+        $registrationData = session('registration_data');
+
+        $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email',
             'phone' => 'nullable|string|max:20',
             'department' => 'nullable|string|max:255',
+            'specialization' => 'nullable|string|max:255',
             'role' => 'required|in:admin,instructor,student',
-        'student_id' => 'nullable|string|max:255',
-        'password' => 'required|string|min:6|confirmed',
-    ]);
+            'student_id' => 'nullable|string|max:255',
+            'password' => 'required|string|min:6|confirmed',
+        ]);
 
-    User::create([
-        'name' => $validated['name'],
-        'email' => $validated['email'],
-        'phone' => $validated['phone'] ?? null,
-        'department' => $validated['department'] ?? null,
-        'role' => $validated['role'],
-        'student_id' => $validated['student_id'] ?? null,
-        'password' => bcrypt($validated['password']),
-    ]);
+        // إنشاء الحساب
+        User::create([
+            'name' => $validated['name'],
+            'email' => $registrationData['email'],
+            'phone' => $validated['phone'] ?? null,
+            'department' => $validated['department'] ?? null,
+            'specialization' => $validated['specialization'] ?? null,
+            'role' => $validated['role'],
+            'student_id' => $validated['student_id'] ?? null,
+            'password' => bcrypt($validated['password']),
+            'email_verified_at' => now(),
+        ]);
 
-    return redirect('/login')->with('success', 'تم التسجيل بنجاح، يرجى تسجيل الدخول')->withHeaders([
-        'Cache-Control' => 'no-cache, no-store, must-revalidate',
-        'Pragma' => 'no-cache',
-        'Expires' => '0'
-    ]);
-})->name('register.post');
+        // تنظيف الجلسة
+        session()->forget(['registration_data', 'email_verified']);
+
+        return redirect('/login')->with('success', 'تم إنشاء الحساب بنجاح. يمكنك الآن تسجيل الدخول.')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('register.complete.post');
+
+    Route::post('/register/resend', function (Request $request) {
+        if (!session('registration_data')) {
+            return redirect('/register')->withErrors(['general' => 'يرجى إدخال البريد الإلكتروني أولاً']);
+        }
+
+        $registrationData = session('registration_data');
+
+        // إنشاء رمز تحقق جديد
+        $verificationCode = strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 6));
+
+        // تحديث البيانات في الجلسة
+        session([
+            'registration_data' => [
+                'email' => $registrationData['email'],
+                'verification_code' => $verificationCode,
+                'expires_at' => now()->addMinutes(10),
+            ]
+        ]);
+
+        // إرسال البريد الإلكتروني
+        try {
+            \Illuminate\Support\Facades\Mail::to($registrationData['email'])->send(new \App\Mail\EmailVerification((object)['name' => 'طالب جديد'], $verificationCode));
+        } catch (\Exception $e) {
+            return back()->withErrors(['general' => 'فشل في إرسال البريد الإلكتروني. يرجى المحاولة مرة أخرى.']);
+        }
+
+        return back()->with('success', 'تم إرسال رمز تحقق جديد إلى بريدك الإلكتروني');
+    })->name('register.resend');
 
     Route::post('/logout', function () {
         // Clear all session data regardless of current state
@@ -237,7 +374,9 @@ Route::prefix('admin')->group(function () {
             return redirect('/login');
         }
         
-        return view('admin.users.form');
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+        return view('admin.users.form', compact('departments', 'specializations'));
     })->name('admin.users.create');
     
     Route::get('/users/{user}/edit', function ($user) {
@@ -246,7 +385,9 @@ Route::prefix('admin')->group(function () {
         }
         
         $user = User::findOrFail($user);
-        return view('admin.users.form', compact('user'));
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+        return view('admin.users.form', compact('user', 'departments', 'specializations'));
     })->name('admin.users.edit');
 
     Route::post('/users', function (Request $request) {
@@ -259,6 +400,7 @@ Route::prefix('admin')->group(function () {
             'email' => 'required|email|unique:users,email',
             'role' => 'required|in:admin,instructor,student',
             'department' => 'nullable|string|max:255',
+            'specialization' => 'nullable|string|max:255',
             'student_id' => 'nullable|string|max:255',
             'password' => 'required|string|min:6',
         ]);
@@ -268,6 +410,7 @@ Route::prefix('admin')->group(function () {
             'email' => $validated['email'],
             'role' => $validated['role'],
             'department' => $validated['department'] ?? null,
+            'specialization' => $validated['specialization'] ?? null,
             'student_id' => $validated['student_id'] ?? null,
             'password' => bcrypt($validated['password']),
         ]);
@@ -287,6 +430,7 @@ Route::prefix('admin')->group(function () {
             'email' => 'required|email|unique:users,email,' . $userModel->id,
             'role' => 'required|in:admin,instructor,student',
             'department' => 'nullable|string|max:255',
+            'specialization' => 'nullable|string|max:255',
             'student_id' => 'nullable|string|max:255',
             'password' => 'nullable|string|min:6',
         ]);
@@ -296,6 +440,7 @@ Route::prefix('admin')->group(function () {
             'email' => $validated['email'],
             'role' => $validated['role'],
             'department' => $validated['department'] ?? null,
+            'specialization' => $validated['specialization'] ?? null,
             'student_id' => $validated['student_id'] ?? null,
             'password' => $validated['password'] ? bcrypt($validated['password']) : $userModel->password,
         ]);
@@ -319,7 +464,9 @@ Route::prefix('admin')->group(function () {
         }
         
         $instructors = User::where('role', 'instructor')->get();
-        return view('admin.courses.form', compact('instructors'));
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+        return view('admin.courses.form', compact('instructors', 'departments', 'specializations'));
     })->name('admin.courses.create');
 
     Route::post('/courses', function (Request $request) {
@@ -332,6 +479,7 @@ Route::prefix('admin')->group(function () {
             'code' => 'required|string|max:255|unique:courses,code',
             'description' => 'nullable|string',
             'department' => 'required|string|max:255',
+            'specialization' => 'nullable|string|max:255',
             'instructor_id' => 'required|exists:users,id',
             'status' => 'required|in:active,inactive',
             'credit_hours' => 'nullable|integer|min:1',
@@ -343,6 +491,7 @@ Route::prefix('admin')->group(function () {
             'code' => $validated['code'],
             'description' => $validated['description'] ?? null,
             'department' => $validated['department'],
+            'specialization' => $validated['specialization'] ?? null,
             'status' => $validated['status'],
             'instructor_id' => $validated['instructor_id'],
             'credit_hours' => $validated['credit_hours'] ?? 3,
@@ -359,7 +508,9 @@ Route::prefix('admin')->group(function () {
 
         $course = Course::findOrFail($course);
         $instructors = User::where('role', 'instructor')->get();
-        return view('admin.courses.form', compact('course', 'instructors'));
+        $departments = Department::orderBy('name')->get();
+        $specializations = Specialization::with('department')->orderBy('name')->get();
+        return view('admin.courses.form', compact('course', 'instructors', 'departments', 'specializations'));
     })->name('admin.courses.edit');
 
     Route::put('/courses/{course}', function (Request $request, $course) {
@@ -374,6 +525,7 @@ Route::prefix('admin')->group(function () {
             'code' => 'required|string|max:255|unique:courses,code,' . $courseModel->id,
             'description' => 'nullable|string',
             'department' => 'required|string|max:255',
+            'specialization' => 'nullable|string|max:255',
             'instructor_id' => 'required|exists:users,id',
             'status' => 'required|in:active,inactive',
             'credit_hours' => 'nullable|integer|min:1',
@@ -385,6 +537,7 @@ Route::prefix('admin')->group(function () {
             'code' => $validated['code'],
             'description' => $validated['description'] ?? null,
             'department' => $validated['department'],
+            'specialization' => $validated['specialization'] ?? null,
             'status' => $validated['status'],
             'instructor_id' => $validated['instructor_id'],
             'credit_hours' => $validated['credit_hours'] ?? 3,
@@ -413,7 +566,97 @@ Route::prefix('admin')->group(function () {
 
         return redirect()->route('admin.courses.index')->with('success', 'تم حذف المقرر بنجاح');
     })->name('admin.courses.destroy');
-    
+
+    // Departments & Specializations
+    Route::get('/departments', function () {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $departments = Department::with('specializations')->orderBy('name')->get();
+        $allDepartments = Department::orderBy('name')->get();
+
+        return view('admin.departments.index', compact('departments', 'allDepartments'));
+    })->name('admin.departments.index');
+
+    Route::post('/departments', function (Request $request) {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|unique:departments,name',
+        ]);
+
+        Department::create(['name' => $validated['name']]);
+
+        return redirect()->route('admin.departments.index')->with('success', 'تم إنشاء القسم بنجاح');
+    })->name('admin.departments.store');
+
+    Route::post('/specializations', function (Request $request) {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $validated = $request->validate([
+            'department_id' => 'required|exists:departments,id',
+            'name' => 'required|string|max:255',
+        ]);
+
+        $exists = Specialization::where('department_id', $validated['department_id'])
+            ->where('name', $validated['name'])
+            ->exists();
+
+        if ($exists) {
+            return redirect()->route('admin.departments.index')->withErrors(['name' => 'هذا التخصص موجود بالفعل ضمن هذا القسم']);
+        }
+
+        Specialization::create([
+            'department_id' => $validated['department_id'],
+            'name' => $validated['name'],
+        ]);
+
+        return redirect()->route('admin.departments.index')->with('success', 'تم إضافة التخصص بنجاح');
+    })->name('admin.specializations.store');
+
+    Route::put('/departments/{department}', function (Request $request, $department) {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $dept = Department::findOrFail($department);
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|unique:departments,name,' . $dept->id,
+        ]);
+
+        $dept->update(['name' => $validated['name']]);
+
+        return redirect()->route('admin.departments.index')->with('success', 'تم تحديث القسم بنجاح');
+    })->name('admin.departments.update');
+
+    Route::delete('/departments/{department}', function ($department) {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $dept = Department::findOrFail($department);
+        $dept->delete();
+
+        return redirect()->route('admin.departments.index')->with('success', 'تم حذف القسم بنجاح');
+    })->name('admin.departments.destroy');
+
+    Route::delete('/specializations/{specialization}', function ($specialization) {
+        if (!session('user_id')) {
+            return redirect('/login');
+        }
+
+        $spec = Specialization::findOrFail($specialization);
+        $spec->delete();
+
+        return redirect()->route('admin.departments.index')->with('success', 'تم حذف التخصص بنجاح');
+    })->name('admin.specializations.destroy');
+
     // Reports
     Route::get('/reports', function () {
         if (!session('user_id')) {
@@ -777,7 +1020,12 @@ Route::prefix('instructor')->group(function () {
 
         $attendanceSession = AttendanceSession::with(['course.enrollments.student', 'attendanceRecords.student'])
             ->where('instructor_id', session('user_id'))
-            ->findOrFail($session);
+            ->find($session);
+
+        if (! $attendanceSession) {
+            return redirect()->route('instructor.attendance.index')
+                ->withErrors(['general' => 'هذه الجلسة غير موجودة أو ليست من ضمن جلساتك.']);
+        }
 
         $records = $attendanceSession->attendanceRecords;
         $enrolledStudentIds = $attendanceSession->course->enrollments->pluck('student_id');
@@ -895,9 +1143,9 @@ Route::prefix('instructor')->group(function () {
         if (!session('user_id') || session('user_role') !== 'instructor') {
             return redirect('/login');
         }
-        $courses = Course::where('instructor_id', session('user_id'))->with('enrollments')->get();
+        $courses = Course::where('instructor_id', session('user_id'))->with(['enrollments', 'sessions'])->get();
         return view('instructor.courses.index', compact('courses'));
-    })->name('instructor.courses');
+    })->name('instructor.courses.index');
     
     Route::get('/courses/{course}/attendance', function ($course) {
         if (!session('user_id') || session('user_role') !== 'instructor') {
@@ -1014,10 +1262,139 @@ Route::prefix('student')->group(function () {
         if (!session('user_id') || session('user_role') !== 'student') {
             return redirect('/login');
         }
-        $enrollments = \App\Models\Enrollment::where('student_id', session('user_id'))
-            ->with('course')->get();
-        return view('student.courses.index', compact('enrollments'));
-    })->name('student.courses');
+
+        $query = \App\Models\Course::with(['instructor', 'enrollments']);
+
+        // فلترة حسب القسم
+        if (request('department')) {
+            $query->where('department', request('department'));
+        }
+
+        // فلترة حسب التخصص
+        if (request('specialization')) {
+            $query->where('specialization', request('specialization'));
+        }
+
+        // فلترة حسب المستوى
+        if (request('level')) {
+            $query->where('level', request('level'));
+        }
+
+        // فلترة حسب الشعبة
+        if (request('section')) {
+            $query->where('section', 'like', '%' . request('section') . '%');
+        }
+
+        // فلترة حسب اسم المعلم
+        if (request('instructor')) {
+            $query->whereHas('instructor', function($q) {
+                $q->where('name', 'like', '%' . request('instructor') . '%');
+            });
+        }
+
+        // فلترة حسب المستوى والتخصص والقسم للطالب الحالي
+        $student = \App\Models\User::find(session('user_id'));
+        if ($student->department) {
+            $query->where('department', $student->department);
+        }
+        if ($student->specialization) {
+            $query->where('specialization', $student->specialization);
+        }
+        if ($student->level) {
+            $query->where('level', $student->level);
+        }
+        if ($student->section) {
+            $query->where('section', $student->section);
+        }
+
+        $courses = $query->paginate(10);
+
+        return view('student.courses.index', compact('courses'));
+    })->name('student.courses.index');
+
+    // تسجيل في مقرر
+    Route::post('/courses/{course}/enroll', function ($course) {
+        if (!session('user_id') || session('user_role') !== 'student') {
+            return redirect('/login');
+        }
+
+        $course = \App\Models\Course::findOrFail($course);
+        $studentId = session('user_id');
+
+        // التحقق من عدم التسجيل مسبقاً
+        $existing = \App\Models\Enrollment::where('student_id', $studentId)
+            ->where('course_id', $course->id)
+            ->exists();
+
+        if ($existing) {
+            return back()->with('error', 'أنت مسجل بالفعل في هذا المقرر');
+        }
+
+        // التحقق من السعة
+        if ($course->enrollments->count() >= $course->capacity) {
+            return back()->with('error', 'المقرر مكتمل، لا توجد أماكن متاحة');
+        }
+
+        // التحقق من تطابق القسم والتخصص والمستوى والشعبة
+        $student = \App\Models\User::find($studentId);
+        if ($student->department && $course->department && $student->department !== $course->department) {
+            return back()->with('error', 'لا يمكنك التسجيل في مقرر من قسم مختلف');
+        }
+        if ($student->specialization && $course->specialization && $student->specialization !== $course->specialization) {
+            return back()->with('error', 'لا يمكنك التسجيل في مقرر من تخصص مختلف');
+        }
+        if ($student->level && $course->level && $student->level !== $course->level) {
+            return back()->with('error', 'لا يمكنك التسجيل في مقرر من مستوى مختلف');
+        }
+        if ($student->section && $course->section && $student->section !== $course->section) {
+            return back()->with('error', 'لا يمكنك التسجيل في مقرر من شعبة مختلفة');
+        }
+
+        \App\Models\Enrollment::create([
+            'student_id' => $studentId,
+            'course_id' => $course->id,
+        ]);
+
+        // تسجيل العملية
+        \App\Models\AuditLog::create([
+            'user_id' => $studentId,
+            'action' => 'enroll_course',
+            'description' => "تسجيل في المقرر: {$course->name}",
+            'ip_address' => request()->ip(),
+        ]);
+
+        return back()->with('success', 'تم التسجيل في المقرر بنجاح');
+    })->name('student.courses.enroll');
+
+    // إلغاء التسجيل من مقرر
+    Route::delete('/courses/{course}/unenroll', function ($course) {
+        if (!session('user_id') || session('user_role') !== 'student') {
+            return redirect('/login');
+        }
+
+        $course = \App\Models\Course::findOrFail($course);
+        $studentId = session('user_id');
+
+        $enrollment = \App\Models\Enrollment::where('student_id', $studentId)
+            ->where('course_id', $course->id)
+            ->first();
+
+        if (!$enrollment) {
+            return back()->with('error', 'أنت غير مسجل في هذا المقرر');
+        }
+
+        $enrollment->delete();
+
+        // تسجيل العملية
+        \App\Models\AuditLog::create([
+            'user_id' => $studentId,
+            'action' => 'unenroll_course',
+            'description' => "إلغاء التسجيل من المقرر: {$course->name}",
+            'ip_address' => request()->ip(),
+        ]);
+
+        return back()->with('success', 'تم إلغاء التسجيل من المقرر بنجاح');
+    })->name('student.courses.unenroll');
     
     Route::get('/courses/{course}', function ($course) {
         if (!session('user_id') || session('user_role') !== 'student') {
@@ -1025,7 +1402,7 @@ Route::prefix('student')->group(function () {
         }
         $enrollment = \App\Models\Enrollment::where('student_id', session('user_id'))
             ->where('course_id', $course)
-            ->with(['course', 'attendanceRecords'])->firstOrFail();
+            ->with(['course.sessions', 'attendanceRecords'])->firstOrFail();
         return view('student.courses.show', compact('enrollment'));
     })->name('student.courses.show');
     
@@ -1122,6 +1499,134 @@ Route::prefix('student')->group(function () {
         return response()->json(['success' => 'تم تسجيل الحضور بنجاح']);
     })->name('student.scan-qr.post');
 });
+
+// تسجيل الحضور عبر API
+Route::post('/attendance/record', function (Request $request) {
+    if (!session('user_id') || session('user_role') !== 'student') {
+        return response()->json([
+            'success' => false,
+            'message' => 'غير مصرح لك بالوصول',
+        ], 401);
+    }
+
+    $validated = $request->validate([
+        'session_id' => 'required|exists:attendance_sessions,id',
+        'verification_method' => 'required|in:qrcode,nfc,manual,gps',
+        'latitude' => 'nullable|numeric',
+        'longitude' => 'nullable|numeric',
+    ]);
+
+    $studentId = session('user_id');
+    $session = AttendanceSession::findOrFail($validated['session_id']);
+
+    // التحقق من أن الجلسة نشطة
+    if ($session->status !== 'active') {
+        return response()->json([
+            'success' => false,
+            'message' => 'الجلسة غير نشطة',
+        ], 400);
+    }
+
+    // التحقق من أن الطالب مسجل في المقرر نفسه
+    $enrolled = Enrollment::where('student_id', $studentId)
+        ->where('course_id', $session->course_id)
+        ->exists();
+
+    if (!$enrolled) {
+        return response()->json([
+            'success' => false,
+            'message' => 'أنت غير مسجل في هذا المقرر',
+        ], 403);
+    }
+
+    // التحقق من تطابق القسم والتخصص إن كان موجوداً
+    $student = User::find($studentId);
+    if ($student->department && $session->course->department && $student->department !== $session->course->department) {
+        return response()->json([
+            'success' => false,
+            'message' => 'أنت غير من نفس القسم لمقرر هذه الجلسة',
+        ], 403);
+    }
+
+    if ($student->specialization && $session->course->specialization && $student->specialization !== $session->course->specialization) {
+        return response()->json([
+            'success' => false,
+            'message' => 'تخصصك لا يطابق تخصص المقرر',
+        ], 403);
+    }
+
+    // التحقق من عدم تسجيل الحضور مسبقاً
+    $existing = AttendanceRecord::where('session_id', $session->id)
+        ->where('student_id', $studentId)
+        ->first();
+
+    if ($existing) {
+        return response()->json([
+            'success' => false,
+            'message' => 'تم تسجيل حضورك مسبقاً في هذه الجلسة',
+        ], 409);
+    }
+
+    // التحقق من GPS وموقع الغرفة إذا كانت معلومات الفصل متوفرة
+    $distance = null;
+    if ($session->classroom_latitude && $session->classroom_longitude) {
+        if (!$validated['latitude'] || !$validated['longitude']) {
+            if ($session->gps_required) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'يتطلب هذا الفصل بيانات GPS لتسجيل الحضور',
+                ], 400);
+            }
+        } else {
+            // حساب المسافة (نفس المنطق في AttendanceController)
+            $earthRadius = 6371000; // متر
+            $latFrom = deg2rad($validated['latitude']);
+            $lonFrom = deg2rad($validated['longitude']);
+            $latTo = deg2rad($session->classroom_latitude);
+            $lonTo = deg2rad($session->classroom_longitude);
+
+            $latDelta = $latTo - $latFrom;
+            $lonDelta = $lonTo - $lonFrom;
+
+            $angle = 2 * asin(sqrt(pow(sin($latDelta / 2), 2) +
+                cos($latFrom) * cos($latTo) * pow(sin($lonDelta / 2), 2)));
+            $distance = $angle * $earthRadius;
+
+            if ($distance > 100) { // 100 متر
+                return response()->json([
+                    'success' => false,
+                    'message' => 'أنت بعيد جداً عن الفصل الدراسي',
+                    'distance' => round($distance, 2),
+                ], 403);
+            }
+        }
+    }
+
+    // تسجيل الحضور
+    $record = AttendanceRecord::create([
+        'session_id' => $session->id,
+        'student_id' => $studentId,
+        'course_id' => $session->course_id,
+        'marked_at' => now(),
+        'verification_method' => $validated['verification_method'],
+        'latitude' => $validated['latitude'] ?? null,
+        'longitude' => $validated['longitude'] ?? null,
+        'distance_from_classroom' => $distance,
+    ]);
+
+    // تسجيل العملية
+    AuditLog::create([
+        'user_id' => $studentId,
+        'action' => 'record_attendance',
+        'description' => "تسجيل حضور في جلسة {$session->course->name}",
+        'ip_address' => $request->ip(),
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'تم تسجيل الحضور بنجاح',
+    ]);
+})->name('attendance.record');
 
 // Notifications
 Route::get('/notifications', function () {

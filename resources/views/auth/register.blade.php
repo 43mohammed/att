@@ -107,56 +107,12 @@
                 @csrf
                 
                 <div class="form-group">
-                    <label for="name">الاسم الكامل</label>
-                    <input type="text" id="name" name="name" required value="{{ old('name') }}">
+                    <label for="email">البريد الإلكتروني الجامعي</label>
+                    <input type="email" id="email" name="email" required value="{{ old('email') }}" placeholder="example@nbu.edu.sa">
+                    <small class="form-text">يجب أن يكون البريد الإلكتروني من جامعة الحدود الشمالية (@nbu.edu.sa)</small>
                 </div>
 
-                <div class="form-group">
-                    <label for="email">البريد الإلكتروني</label>
-                    <input type="email" id="email" name="email" required value="{{ old('email') }}">
-                </div>
-
-                <div class="form-group">
-                    <label for="phone">رقم الهاتف</label>
-                    <input type="tel" id="phone" name="phone" value="{{ old('phone') }}">
-                </div>
-
-                <div class="form-group">
-                    <label for="department">القسم</label>
-                    <select id="department" name="department" required>
-                        <option value="">اختر القسم</option>
-                        <option value="هندسة">هندسة</option>
-                        <option value="علوم">علوم</option>
-                        <option value="آداب">آداب</option>
-                        <option value="تجارة">تجارة</option>
-                        <option value="طب">طب</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="role">الدور</label>
-                    <select id="role" name="role" required>
-                        <option value="student">طالب</option>
-                        <option value="instructor">محاضر</option>
-                    </select>
-                </div>
-
-                <div class="form-group" id="student-id-group" style="display: none;">
-                    <label for="student_id">رقم الطالب</label>
-                    <input type="text" id="student_id" name="student_id" value="{{ old('student_id') }}">
-                </div>
-
-                <div class="form-group">
-                    <label for="password">كلمة المرور</label>
-                    <input type="password" id="password" name="password" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="password_confirmation">تأكيد كلمة المرور</label>
-                    <input type="password" id="password_confirmation" name="password_confirmation" required>
-                </div>
-
-                <button type="submit" class="btn-register">إنشاء الحساب</button>
+                <button type="submit" class="btn-register">إرسال رمز التحقق</button>
             </form>
 
             <div class="login-link">
@@ -172,6 +128,31 @@
                 studentIdGroup.style.display = 'block';
             } else {
                 studentIdGroup.style.display = 'none';
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const departmentSelect = document.querySelector('[data-dept-select]');
+            const specializationSelect = document.querySelector('[data-spec-select]');
+
+            function updateSpecializations() {
+                const selectedDepartment = departmentSelect.value;
+                Array.from(specializationSelect.options).forEach(option => {
+                    if (!option.dataset.department) {
+                        return;
+                    }
+                    option.hidden = selectedDepartment && option.dataset.department !== selectedDepartment;
+                });
+
+                const selectedOption = specializationSelect.selectedOptions[0];
+                if (selectedDepartment && selectedOption && selectedOption.hidden) {
+                    specializationSelect.value = '';
+                }
+            }
+
+            if (departmentSelect && specializationSelect) {
+                departmentSelect.addEventListener('change', updateSpecializations);
+                updateSpecializations();
             }
         });
     </script>

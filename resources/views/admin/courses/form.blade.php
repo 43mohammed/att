@@ -43,7 +43,24 @@
 
                 <div class="form-group">
                     <label for="department">القسم *</label>
-                    <input type="text" id="department" name="department" class="form-control" value="{{ old('department', $course->department ?? '') }}" required>
+                    <select id="department" name="department" class="form-control" required data-dept-select>
+                        <option value="">-- اختر القسم --</option>
+                        @foreach($departments as $dept)
+                            <option value="{{ $dept->name }}" {{ old('department', $course->department ?? '') === $dept->name ? 'selected' : '' }}>{{ $dept->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="specialization">التخصص</label>
+                    <select id="specialization" name="specialization" class="form-control" data-spec-select>
+                        <option value="">-- اختر التخصص --</option>
+                        @foreach($specializations as $specialization)
+                            <option value="{{ $specialization->name }}" data-department="{{ $specialization->department->name }}" {{ old('specialization', $course->specialization ?? '') === $specialization->name ? 'selected' : '' }}>
+                                {{ $specialization->name }}
+                            </option>
+                        @endforeach
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -122,4 +139,33 @@
     .btn-primary { background-color: #007bff; color: white; }
     .btn-secondary { background-color: #6c757d; color: white; }
 </style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const departmentSelect = document.querySelector('[data-dept-select]');
+        const specializationSelect = document.querySelector('[data-spec-select]');
+
+        if (!departmentSelect || !specializationSelect) {
+            return;
+        }
+
+        function updateSpecializations() {
+            const selectedDepartment = departmentSelect.value;
+            Array.from(specializationSelect.options).forEach(option => {
+                if (!option.dataset.department) {
+                    return;
+                }
+                option.hidden = selectedDepartment && option.dataset.department !== selectedDepartment;
+            });
+
+            const selectedOption = specializationSelect.selectedOptions[0];
+            if (selectedDepartment && selectedOption && selectedOption.hidden) {
+                specializationSelect.value = '';
+            }
+        }
+
+        departmentSelect.addEventListener('change', updateSpecializations);
+        updateSpecializations();
+    });
+</script>
 @endsection

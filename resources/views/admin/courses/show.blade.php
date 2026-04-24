@@ -20,6 +20,9 @@
                 <dt class="col-sm-3">القسم</dt>
                 <dd class="col-sm-9">{{ $course->department }}</dd>
 
+                <dt class="col-sm-3">التخصص</dt>
+                <dd class="col-sm-9">{{ $course->specialization ?? 'غير محدد' }}</dd>
+
                 <dt class="col-sm-3">المحاضر</dt>
                 <dd class="col-sm-9">{{ $course->instructor->name ?? 'غير محدد' }}</dd>
 

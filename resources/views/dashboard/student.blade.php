@@ -101,7 +101,7 @@
                     📷 مسح QR Code
                 </a>
                 <div id="qr-scanner" style="display: none; margin-top: var(--spacing-lg);">
-                    <video id="video" style="width: 100%; border-radius: var(--radius-lg); max-height: 300px; background: var(--dark);"></video>
+                    <video id="video" autoplay playsinline muted style="width: 100%; height: auto; border-radius: var(--radius-lg); max-height: 300px; background: var(--dark); display: none; object-fit: cover;"></video>
                     <canvas id="canvas" style="display: none;"></canvas>
                 </div>
             </div>
@@ -190,20 +190,109 @@
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
+function updateVideoElement(video) {
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('autoplay', 'true');
+    video.playsInline = true;
+    video.muted = true;
+    video.autoplay = true;
+    video.style.width = '100%';
+    video.style.height = 'auto';
+    video.style.objectFit = 'cover';
+    video.style.position = 'relative';
+    video.style.zIndex = '1000';
+    video.style.display = 'none';
+    video.style.visibility = 'visible';
+    video.style.opacity = '1';
+}
+
+function waitForVideoEvent(video, eventName, timeout = 7000) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            video.removeEventListener(eventName, onEvent);
+            reject(new Error(`Timeout waiting for ${eventName}`));
+        }, timeout);
+
+        function onEvent() {
+            clearTimeout(timer);
+            video.removeEventListener(eventName, onEvent);
+            resolve();
+        }
+
+        video.addEventListener(eventName, onEvent);
+    });
+}
+
 async function startQRScanner() {
     const scanner = document.getElementById('qr-scanner');
     const video = document.getElementById('video');
-    
+
     if (scanner.style.display === 'none') {
         scanner.style.display = 'block';
-        
+        updateVideoElement(video);
+
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment' } 
-            });
+            const primaryConstraints = {
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+            let stream;
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
+                console.log('[Dashboard QR] Primary getUserMedia succeeded', primaryConstraints);
+            } catch (primaryError) {
+                console.warn('[Dashboard QR] Primary getUserMedia failed', primaryError);
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                console.log('[Dashboard QR] Fallback getUserMedia succeeded', { video: true });
+            }
+
             video.srcObject = stream;
+            console.log('[Dashboard QR] Assigned srcObject to video', video.srcObject);
+
+            const tracks = stream.getTracks().map(track => ({ kind: track.kind, label: track.label, readyState: track.readyState }));
+            console.log('[Dashboard QR] Stream tracks info', tracks);
+
+            try {
+                await waitForVideoEvent(video, 'loadedmetadata');
+                console.log('[Dashboard QR] loadedmetadata fired');
+            } catch (e) {
+                console.warn('[Dashboard QR] loadedmetadata timeout', e);
+            }
+
+            try {
+                await waitForVideoEvent(video, 'canplay');
+                console.log('[Dashboard QR] canplay fired');
+            } catch (e) {
+                console.warn('[Dashboard QR] canplay timeout', e);
+            }
+
+            try {
+                await video.play();
+                console.log('[Dashboard QR] video.play succeeded');
+            } catch (playError) {
+                console.warn('[Dashboard QR] video.play failed', playError);
+            }
+
+            video.style.display = 'block';
+
+            if (video.videoWidth === 0 || video.videoHeight === 0) {
+                console.warn('[Dashboard QR] zero video dimensions', { videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+                setTimeout(() => {
+                    if (video.videoWidth === 0 || video.videoHeight === 0) {
+                        console.warn('[Dashboard QR] reinitializing stream due to zero dimensions');
+                        startQRScanner();
+                    }
+                }, 1000);
+            }
+
             scanQRCode();
         } catch (error) {
+            console.error('[Dashboard QR] Error accessing camera:', error);
             alert('خطأ في الوصول للكاميرا: ' + error.message);
         }
     } else {
@@ -220,39 +309,34 @@ function scanQRCode() {
     const ctx = canvas.getContext('2d');
 
     const scan = async () => {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
             try {
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const code = jsQR(imageData.data, imageData.width, imageData.height);
-                
+
                 if (code) {
                     console.log('QR Code detected:', code.data);
                     
-                    // Send to server
                     fetch('/student/scan-qr', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
                         },
-                        body: JSON.stringify({
-                            qr_data: code.data
-                        })
+                        body: JSON.stringify({ qr_data: code.data })
                     })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
                             alert('تم تسجيل الحضور بنجاح!');
-                            // Hide scanner
                             document.getElementById('qr-scanner').style.display = 'none';
                             if (video.srcObject) {
                                 video.srcObject.getTracks().forEach(track => track.stop());
                             }
-                            // Reload page to update stats
                             setTimeout(() => location.reload(), 1000);
                         } else {
                             alert('خطأ: ' + data.error);

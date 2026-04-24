@@ -16,16 +16,116 @@ class QRCodeScanner {
 
     async start(elementId) {
         this.video = document.getElementById(elementId);
-        
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' }
+
+        function applyVideoAttributes(video) {
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('muted', 'true');
+            video.setAttribute('autoplay', 'true');
+            video.playsInline = true;
+            video.muted = true;
+            video.autoplay = true;
+            video.style.width = '100%';
+            video.style.height = 'auto';
+            video.style.objectFit = 'cover';
+            video.style.position = 'relative';
+            video.style.zIndex = '1000';
+            video.style.visibility = 'visible';
+            video.style.opacity = '1';
+            video.style.display = 'none';
+        }
+
+        function waitForEvent(target, eventName, timeout = 7000) {
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    target.removeEventListener(eventName, onEvent);
+                    reject(new Error(`Timeout waiting for ${eventName}`));
+                }, timeout);
+
+                function onEvent() {
+                    clearTimeout(timer);
+                    target.removeEventListener(eventName, onEvent);
+                    resolve();
+                }
+
+                target.addEventListener(eventName, onEvent);
             });
-            
+        }
+
+        function forceRepaint(video) {
+            const originalDisplay = video.style.display;
+            video.style.display = 'none';
+            void video.offsetHeight;
+            video.style.display = originalDisplay || 'block';
+        }
+
+        try {
+            console.log('[PWA QR] navigator.mediaDevices available:', !!navigator.mediaDevices, 'getUserMedia available:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('navigator.mediaDevices.getUserMedia غير مدعوم');
+            }
+
+            applyVideoAttributes(this.video);
+
+            const primaryConstraints = {
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
+                console.log('[PWA QR] Primary getUserMedia succeeded', primaryConstraints);
+            } catch (primaryError) {
+                console.warn('[PWA QR] Primary getUserMedia failed', primaryError);
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                console.log('[PWA QR] Fallback getUserMedia succeeded', { video: true });
+            }
+
             this.video.srcObject = stream;
+            console.log('[PWA QR] Assigned srcObject to video', this.video.srcObject);
+            const tracks = stream.getTracks().map(track => ({ kind: track.kind, label: track.label, readyState: track.readyState }));
+            console.log('[PWA QR] Stream tracks info', tracks);
+
+            try {
+                await waitForEvent(this.video, 'loadedmetadata');
+                console.log('[PWA QR] loadedmetadata fired');
+            } catch (e) {
+                console.warn('[PWA QR] loadedmetadata timeout', e);
+            }
+
+            try {
+                await waitForEvent(this.video, 'canplay');
+                console.log('[PWA QR] canplay fired');
+            } catch (e) {
+                console.warn('[PWA QR] canplay timeout', e);
+            }
+
+            try {
+                await this.video.play();
+                console.log('[PWA QR] video.play succeeded');
+            } catch (playError) {
+                console.warn('[PWA QR] video.play failed', playError);
+            }
+
+            forceRepaint(this.video);
             this.video.style.display = 'block';
             this.isScanning = true;
-            
+
+            if (this.video.videoWidth === 0 || this.video.videoHeight === 0) {
+                console.warn('[PWA QR] video dimensions are zero after start', { videoWidth: this.video.videoWidth, videoHeight: this.video.videoHeight });
+                setTimeout(() => {
+                    if (this.video.videoWidth === 0 || this.video.videoHeight === 0) {
+                        console.warn('[PWA QR] restarting camera due to zero dimensions');
+                        this.stop();
+                        this.start(elementId);
+                    }
+                }, 1000);
+                return;
+            }
+
             this.scan();
         } catch (error) {
             console.error('❌ خطأ في الوصول للكاميرا:', error);
@@ -42,19 +142,37 @@ class QRCodeScanner {
     }
 
     scan() {
-        if (!this.isScanning) return;
+        if (!this.isScanning || !this.video) return;
 
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
-        
+
+        if (this.video.videoWidth <= 0 || this.video.videoHeight <= 0) {
+            console.warn('[PWA QR] Waiting for video dimensions', { readyState: this.video.readyState, videoWidth: this.video.videoWidth, videoHeight: this.video.videoHeight });
+            requestAnimationFrame(() => this.scan());
+            return;
+        }
+
         canvas.width = this.video.videoWidth;
         canvas.height = this.video.videoHeight;
-        
-        context.drawImage(this.video, 0, 0, canvas.width, canvas.height);
-        
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        
-        // محاولة فك تشفير QR Code
+
+        try {
+            context.drawImage(this.video, 0, 0, canvas.width, canvas.height);
+        } catch (error) {
+            console.warn('[PWA QR] drawImage failed', error);
+            requestAnimationFrame(() => this.scan());
+            return;
+        }
+
+        let imageData;
+        try {
+            imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        } catch (error) {
+            console.warn('[PWA QR] getImageData failed', error);
+            requestAnimationFrame(() => this.scan());
+            return;
+        }
+
         try {
             const code = jsQR(imageData.data, imageData.width, imageData.height);
             if (code) {
@@ -63,9 +181,9 @@ class QRCodeScanner {
                 return;
             }
         } catch (error) {
-            console.log('جاري البحث عن QR Code...');
+            console.log('جاري البحث عن QR Code...', error);
         }
-        
+
         requestAnimationFrame(() => this.scan());
     }
 

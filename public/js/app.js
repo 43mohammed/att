@@ -72,17 +72,120 @@ async function startQRScanner() {
 
     const ctx = canvas.getContext('2d');
 
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment' } 
+    function applyVideoDefaults() {
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('muted', 'true');
+        video.setAttribute('autoplay', 'true');
+        video.playsInline = true;
+        video.muted = true;
+        video.autoplay = true;
+        video.style.width = '100%';
+        video.style.height = 'auto';
+        video.style.objectFit = 'cover';
+        video.style.position = 'relative';
+        video.style.zIndex = '1000';
+        video.style.display = 'none';
+        video.style.visibility = 'visible';
+        video.style.opacity = '1';
+    }
+
+    function waitForVideoEvent(eventName, timeout = 7000) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                video.removeEventListener(eventName, onEvent);
+                reject(new Error(`Timeout waiting for ${eventName}`));
+            }, timeout);
+
+            function onEvent() {
+                clearTimeout(timer);
+                video.removeEventListener(eventName, onEvent);
+                resolve();
+            }
+
+            video.addEventListener(eventName, onEvent);
         });
+    }
+
+    async function getCameraStream() {
+        console.log('[App QR] navigator.mediaDevices available:', !!navigator.mediaDevices, 'getUserMedia available:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('navigator.mediaDevices.getUserMedia غير مدعوم');
+        }
+
+        const primaryConstraints = {
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
+
+        try {
+            console.log('[App QR] Requesting camera with primary constraints', primaryConstraints);
+            return await navigator.mediaDevices.getUserMedia(primaryConstraints);
+        } catch (primaryError) {
+            console.warn('[App QR] Primary camera request failed', primaryError);
+            console.log('[App QR] Falling back to simple video:true');
+            return await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+    }
+
+    function forceRepaint() {
+        const originalDisplay = video.style.display;
+        video.style.display = 'none';
+        void video.offsetHeight;
+        video.style.display = originalDisplay || 'block';
+    }
+
+    try {
+        applyVideoDefaults();
+        const stream = await getCameraStream();
         video.srcObject = stream;
+        console.log('[App QR] Assigned srcObject to video', video.srcObject);
+        const trackInfo = stream.getTracks().map(track => ({ kind: track.kind, label: track.label, readyState: track.readyState }));
+        console.log('[App QR] Stream tracks info', trackInfo);
+
+        try {
+            await waitForVideoEvent('loadedmetadata');
+            console.log('[App QR] loadedmetadata fired');
+        } catch (e) {
+            console.warn('[App QR] loadedmetadata timeout', e);
+        }
+
+        try {
+            await waitForVideoEvent('canplay');
+            console.log('[App QR] canplay fired');
+        } catch (e) {
+            console.warn('[App QR] canplay timeout', e);
+        }
+
+        try {
+            await video.play();
+            console.log('[App QR] video.play succeeded');
+        } catch (playError) {
+            console.warn('[App QR] video.play failed', playError);
+        }
+
+        forceRepaint();
+        video.style.display = 'block';
+
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+            console.warn('[App QR] video dimensions zero after start', { videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+            setTimeout(() => {
+                if (video.videoWidth === 0 || video.videoHeight === 0) {
+                    console.warn('[App QR] dimensions still zero, restarting camera');
+                    stream.getTracks().forEach(track => track.stop());
+                    startQRScanner();
+                }
+            }, 1000);
+            return;
+        }
 
         const scan = async () => {
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
                 try {
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
