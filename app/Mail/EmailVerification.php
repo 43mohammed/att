@@ -58,5 +58,5 @@ class EmailVerification extends Mailable
     {
         return [];
     }
-}
-}
+}    
+    
