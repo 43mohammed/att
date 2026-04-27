@@ -37,7 +37,7 @@
     <div class="card">
         <div class="card-header">
             <span>📚 مقرراتي الدراسية</span>
-            <a href="#" class="btn btn-sm btn-primary">عرض الكل</a>
+            <a href="{{ route('student.courses.index') }}" class="btn btn-sm btn-primary">عرض الكل</a>
         </div>
         <div class="card-body">
             <div class="table-responsive">

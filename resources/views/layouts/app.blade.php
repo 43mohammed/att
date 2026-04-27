@@ -81,6 +81,10 @@
         </a>
         
         @if(session('user_role') === 'student')
+            <a href="/student/courses" class="@if(request()->is('student/courses*')) active @endif">
+                <span class="bottom-nav-icon">📚</span>
+                <span>المقررات</span>
+            </a>
             <a href="/student/attendance" class="@if(request()->is('student/attendance')) active @endif">
                 <span class="bottom-nav-icon">📋</span>
                 <span>الحضور</span>

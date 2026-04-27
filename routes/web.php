@@ -13,6 +13,7 @@ use App\Models\AuditLog;
 use App\Models\Department;
 use App\Models\Specialization;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
@@ -66,6 +67,107 @@ Route::middleware('no.cache.auth')->group(function () {
         return back()->with('error', 'بيانات الدخول غير صحيحة');
     })->name('login.post');
 
+    Route::get('/forgot-password', function () {
+        return response()->view('auth.forgot_password')->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('forgot-password');
+
+    Route::post('/forgot-password', function (Request $request) {
+        $validated = $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $user = User::where('email', $validated['email'])->first();
+
+        if ($user) {
+            $token = bin2hex(random_bytes(32));
+
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $validated['email']],
+                [
+                    'token' => $token,
+                    'created_at' => now(),
+                ]
+            );
+
+            $resetUrl = url('/reset-password/' . $token . '?email=' . urlencode($validated['email']));
+
+            try {
+                \Illuminate\Support\Facades\Mail::to($validated['email'])->send(new \App\Mail\PasswordResetMail($user, $resetUrl));
+            } catch (\Exception $e) {
+                return back()->withErrors(['email' => 'فشل في إرسال رابط إعادة التعيين. يرجى المحاولة مرة أخرى.']);
+            }
+        }
+
+        return back()->with('success', 'إذا كان البريد موجوداً في النظام فقد تم إرسال رابط إعادة تعيين كلمة المرور إليه.');
+    })->name('forgot-password.post');
+
+    Route::get('/reset-password/{token}', function ($token, Request $request) {
+        $email = $request->query('email');
+
+        if (! $email) {
+            return redirect('/forgot-password')->withErrors(['email' => 'الرابط غير صالح.']);
+        }
+
+        $reset = DB::table('password_reset_tokens')
+            ->where('email', $email)
+            ->where('token', $token)
+            ->first();
+
+        if (! $reset) {
+            return redirect('/forgot-password')->withErrors(['email' => 'الرابط غير صالح أو لم يُطلب إعادة التعيين.']);
+        }
+
+        if (\Illuminate\Support\Carbon::parse($reset->created_at)->addMinutes(60)->isPast()) {
+            DB::table('password_reset_tokens')->where('email', $email)->delete();
+            return redirect('/forgot-password')->withErrors(['email' => 'انتهت صلاحية رابط إعادة تعيين كلمة المرور.']);
+        }
+
+        return response()->view('auth.reset_password', compact('token', 'email'))->withHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+    })->name('reset-password');
+
+    Route::post('/reset-password', function (Request $request) {
+        $validated = $request->validate([
+            'email' => 'required|email',
+            'token' => 'required|string',
+            'password' => 'required|string|min:6|confirmed',
+        ]);
+
+        $reset = DB::table('password_reset_tokens')
+            ->where('email', $validated['email'])
+            ->where('token', $validated['token'])
+            ->first();
+
+        if (! $reset) {
+            return back()->withErrors(['email' => 'الرابط غير صالح أو لم يُطلب إعادة التعيين.']);
+        }
+
+        if (\Illuminate\Support\Carbon::parse($reset->created_at)->addMinutes(60)->isPast()) {
+            DB::table('password_reset_tokens')->where('email', $validated['email'])->delete();
+            return back()->withErrors(['email' => 'انتهت صلاحية رابط إعادة تعيين كلمة المرور.']);
+        }
+
+        $user = User::where('email', $validated['email'])->first();
+        if (! $user) {
+            return back()->withErrors(['email' => 'لم يتم العثور على حساب لهذا البريد الإلكتروني.']);
+        }
+
+        $user->update([
+            'password' => bcrypt($validated['password']),
+        ]);
+
+        DB::table('password_reset_tokens')->where('email', $validated['email'])->delete();
+
+        return redirect('/login')->with('success', 'تم إعادة تعيين كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول.');
+    })->name('reset-password.post');
+
     Route::get('/register', function () {
         $departments = Department::orderBy('name')->get();
         $specializations = Specialization::with('department')->orderBy('name')->get();
@@ -84,9 +186,9 @@ Route::middleware('no.cache.auth')->group(function () {
                 'email',
                 'unique:users,email',
                 function ($attribute, $value, $fail) {
-                    // التحقق من أن البريد ينتمي إلى جامعة الحدود الشمالية
-                    if (!preg_match('/@nbu\.edu\.sa$/', $value)) {
-                        $fail('يجب أن يكون البريد الإلكتروني من جامعة الحدود الشمالية (@nbu.edu.sa)');
+                    // التحقق من أن البريد ينتمي إلى إحدى قنوات الجامعة المسموح بها
+                    if (!preg_match('/^[^@\s]+@(stu\.nbu\.edu\.sa|nbu\.edu\.sa)$/i', $value)) {
+                        $fail('يجب أن يكون البريد الإلكتروني من جامعة الحدود الشمالية بصيغة الطالب (@stu.nbu.edu.sa) أو المحاضر (@nbu.edu.sa)');
                     }
                 },
             ],
@@ -1311,6 +1413,11 @@ Route::prefix('student')->group(function () {
 
         return view('student.courses.index', compact('courses'));
     })->name('student.courses.index');
+
+    // عرض المقررات المتاحة للطالب (بديل)
+    Route::get('/student/courses', function () {
+        return redirect()->route('student.courses.index');
+    })->name('student.courses.index.redirect');
 
     // تسجيل في مقرر
     Route::post('/courses/{course}/enroll', function ($course) {

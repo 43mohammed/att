@@ -108,8 +108,8 @@
                 
                 <div class="form-group">
                     <label for="email">البريد الإلكتروني الجامعي</label>
-                    <input type="email" id="email" name="email" required value="{{ old('email') }}" placeholder="example@nbu.edu.sa">
-                    <small class="form-text">يجب أن يكون البريد الإلكتروني من جامعة الحدود الشمالية (@nbu.edu.sa)</small>
+                    <input type="email" id="email" name="email" required value="{{ old('email') }}" placeholder="example@stu.nbu.edu.sa أو example@nbu.edu.sa">
+                    <small style="display:block; margin-top:0.5rem; color:#6b7280; font-size:0.9rem;">يمكنك استخدام بريد الطالب بصيغة <strong>@stu.nbu.edu.sa</strong> أو بريد المحاضر بصيغة <strong>@nbu.edu.sa</strong>.</small>
                 </div>
 
                 <button type="submit" class="btn-register">إرسال رمز التحقق</button>
